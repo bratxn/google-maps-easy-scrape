@@ -1,197 +1,178 @@
-document.addEventListener('DOMContentLoaded', function() {
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-        var currentTab = tabs[0];
-        var actionButton = document.getElementById('actionButton');
-        var downloadCsvButton = document.getElementById('downloadCsvButton');
-        var resultsTable = document.getElementById('resultsTable');
-        var filenameInput = document.getElementById('filenameInput');
+document.addEventListener('DOMContentLoaded', function () {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        const currentTab = tabs[0];
+        const actionButton = document.getElementById('actionButton');
+        const downloadCsvButton = document.getElementById('downloadCsvButton');
+        const resultsTable = document.getElementById('resultsTable');
+        const filenameInput = document.getElementById('filenameInput');
 
         if (currentTab && currentTab.url.includes("://www.google.com/maps/search")) {
             document.getElementById('message').textContent = "Let's scrape Google Maps!";
             actionButton.disabled = false;
             actionButton.classList.add('enabled');
         } else {
-            var messageElement = document.getElementById('message');
+            const messageElement = document.getElementById('message');
             messageElement.innerHTML = '';
-            var linkElement = document.createElement('a');
+            const linkElement = document.createElement('a');
             linkElement.href = 'https://www.google.com/maps/search/';
             linkElement.textContent = "Go to Google Maps Search.";
-            linkElement.target = '_blank'; 
+            linkElement.target = '_blank';
             messageElement.appendChild(linkElement);
 
-            actionButton.style.display = 'none'; 
+            actionButton.style.display = 'none';
             downloadCsvButton.style.display = 'none';
-            filenameInput.style.display = 'none'; 
+            filenameInput.style.display = 'none';
         }
 
-        actionButton.addEventListener('click', function() {
-            chrome.scripting.executeScript({
-                target: {tabId: currentTab.id},
-                function: scrapeData
-            }, function(results) {
-                while (resultsTable.firstChild) {
-                    resultsTable.removeChild(resultsTable.firstChild);
-                }
+        actionButton.addEventListener('click', function () {
+            chrome.scripting.executeScript(
+                {
+                    target: { tabId: currentTab.id },
+                    function: scrapeDataWithScroll,
+                },
+                function (results) {
+                    while (resultsTable.firstChild) {
+                        resultsTable.removeChild(resultsTable.firstChild);
+                    }
 
-                // Define and add headers to the table
-                const headers = ['Title', 'Rating', 'Reviews', 'Phone', 'Industry', 'Address', 'Website', 'Google Maps Link'];
-                const headerRow = document.createElement('tr');
-                headers.forEach(headerText => {
-                    const header = document.createElement('th');
-                    header.textContent = headerText;
-                    headerRow.appendChild(header);
-                });
-                resultsTable.appendChild(headerRow);
-
-                // Add new results to the table
-                if (!results || !results[0] || !results[0].result) return;
-                results[0].result.forEach(function(item) {
-                    var row = document.createElement('tr');
-                    ['title', 'rating', 'reviewCount', 'phone', 'industry', 'address', 'companyUrl', 'href'].forEach(function(key) {
-                        var cell = document.createElement('td');
-                        
-                        if (key === 'reviewCount' && item[key]) {
-                            item[key] = item[key].replace(/\(|\)/g, ''); 
-                        }
-                        
-                        cell.textContent = item[key] || ''; 
-                        row.appendChild(cell);
+                    // Define and add headers to the table
+                    const headers = ['Title', 'Rating', 'Reviews', 'Phone', 'Website', 'Google Maps Link'];
+                    const headerRow = document.createElement('tr');
+                    headers.forEach(headerText => {
+                        const header = document.createElement('th');
+                        header.textContent = headerText;
+                        headerRow.appendChild(header);
                     });
-                    resultsTable.appendChild(row);
-                });
+                    resultsTable.appendChild(headerRow);
 
-                if (results && results[0] && results[0].result && results[0].result.length > 0) {
-                    downloadCsvButton.disabled = false;
+                    // Add new results to the table
+                    if (!results || !results[0] || !results[0].result) return;
+                    results[0].result.forEach(function (item) {
+                        const row = document.createElement('tr');
+                        ['title', 'rating', 'reviewCount', 'phone', 'website', 'href'].forEach(function (key) {
+                            const cell = document.createElement('td');
+                            cell.textContent = item[key] || '';
+                            row.appendChild(cell);
+                        });
+                        resultsTable.appendChild(row);
+                    });
+
+                    if (results && results[0] && results[0].result && results[0].result.length > 0) {
+                        downloadCsvButton.disabled = false;
+                    }
                 }
-            });
+            );
         });
 
-        downloadCsvButton.addEventListener('click', function() {
-            var csv = tableToCsv(resultsTable); 
-            var filename = filenameInput.value.trim();
+        downloadCsvButton.addEventListener('click', function () {
+            const csv = tableToCsv(resultsTable);
+            let filename = filenameInput.value.trim();
             if (!filename) {
-                filename = 'google-maps-data.csv'; 
+                filename = 'google-maps-data.csv';
             } else {
                 filename = filename.replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.csv';
             }
-            downloadCsv(csv, filename); 
+            downloadCsv(csv, filename);
         });
-
     });
 });
 
+// Function to scrape data with auto-scrolling
+async function scrapeDataWithScroll() {
+    const results = [];
+    const resultsPane = document.querySelector('[role="feed"]'); // Google Maps results container
 
-function scrapeData() {
-    var links = Array.from(document.querySelectorAll('a[href^="https://www.google.com/maps/place"]'));
-    return links.map(link => {
-        var container = link.closest('[jsaction*="mouseover:pane"]');
-        var titleText = container ? container.querySelector('.fontHeadlineSmall').textContent : '';
-        var rating = '';
-        var reviewCount = '';
-        var phone = '';
-        var industry = '';
-        var address = '';
-        var companyUrl = '';
+    // Helper function to scrape visible results
+    const scrapeVisibleResults = () => {
+        const links = Array.from(document.querySelectorAll('a[href^="https://www.google.com/maps/place"]'));
+        return links.map(link => {
+            const container = link.closest('[jsaction*="mouseover:pane"]');
+            const titleText = container?.querySelector('.fontHeadlineSmall')?.textContent || '';
+            const roleImgContainer = container?.querySelector('[role="img"]');
+            let rating = '';
+            let reviewCount = '';
+            let website = '';
 
-        // Rating and Reviews
-        if (container) {
-            var roleImgContainer = container.querySelector('[role="img"]');
-            
+            // Extract rating and review count
             if (roleImgContainer) {
-                var ariaLabel = roleImgContainer.getAttribute('aria-label');
-            
-                if (ariaLabel && ariaLabel.includes("stars")) {
-                    var parts = ariaLabel.split(' ');
-                    var rating = parts[0];
-                    var reviewCount = '(' + parts[2] + ')'; 
-                } else {
-                    rating = '0';
-                    reviewCount = '0';
+                const ariaLabel = roleImgContainer.getAttribute('aria-label');
+                if (ariaLabel?.includes("stars")) {
+                    const parts = ariaLabel.split(' ');
+                    rating = parts[0];
+                    reviewCount = parts[2] ? `(${parts[2]})` : '';
                 }
             }
-        }
 
-        // Address and Industry
-        if (container) {
-            var containerText = container.textContent || '';
-            var addressRegex = /\d+ [\w\s]+(?:#\s*\d+|Suite\s*\d+|Apt\s*\d+)?/;
-            var addressMatch = containerText.match(addressRegex);
+            // Extract website URL
+            const allLinks = Array.from(container?.querySelectorAll('a[href]') || []);
+            const websiteLink = allLinks.find(link => !link.href.startsWith("https://www.google.com/maps/place/"));
+            if (websiteLink) {
+                website = websiteLink.href;
+            }
 
-            if (addressMatch) {
-                address = addressMatch[0];
+            // Extract phone number
+            const phoneRegex = /(\+\d{1,2}\s)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
+            const phone = container?.textContent.match(phoneRegex)?.[0] || '';
 
-                // Extract industry text based on the position before the address
-                var textBeforeAddress = containerText.substring(0, containerText.indexOf(address)).trim();
-                var ratingIndex = textBeforeAddress.lastIndexOf(rating + reviewCount);
-                if (ratingIndex !== -1) {
-                    // Assuming industry is the first significant text after rating and review count
-                    var rawIndustryText = textBeforeAddress.substring(ratingIndex + (rating + reviewCount).length).trim().split(/[\r\n]+/)[0];
-                    industry = rawIndustryText.replace(/[·.,#!?]/g, '').trim();
-                }
-                var filterRegex = /\b(Closed|Open 24 hours|24 hours)|Open\b/g;
-                address = address.replace(filterRegex, '').trim();
-                address = address.replace(/(\d+)(Open)/g, '$1').trim();
-                address = address.replace(/(\w)(Open)/g, '$1').trim();
-                address = address.replace(/(\w)(Closed)/g, '$1').trim();
+            return {
+                title: titleText,
+                rating,
+                reviewCount,
+                phone,
+                website,
+                href: link.href,
+            };
+        });
+    };
+
+    // Scroll results pane until "You've reached the end of the list."
+    const scrollResultsPane = async () => {
+        let previousHeight = resultsPane.scrollHeight;
+        let attempts = 0; // Safety limit for scrolling
+
+        while (true) {
+            resultsPane.scrollTo(0, resultsPane.scrollHeight);
+            await new Promise(r => setTimeout(r, 2000)); // Wait for new content to load
+
+            const newHeight = resultsPane.scrollHeight;
+            if (newHeight === previousHeight) {
+                attempts++;
             } else {
-                address = '';
+                attempts = 0;
+            }
+
+            previousHeight = newHeight;
+            results.push(...scrapeVisibleResults());
+
+            const endMessage = document.querySelector('[role="heading"][aria-level="3"]');
+            if (endMessage?.textContent.includes("You've reached the end of the list") || attempts >= 5) {
+                break;
             }
         }
+    };
 
-        // Company URL
-        if (container) {
-            var allLinks = Array.from(container.querySelectorAll('a[href]'));
-            var filteredLinks = allLinks.filter(a => !a.href.startsWith("https://www.google.com/maps/place/"));
-            if (filteredLinks.length > 0) {
-                companyUrl = filteredLinks[0].href;
-            }
-        }
-
-        // Phone Numbers
-        if (container) {
-            var containerText = container.textContent || '';
-            var phoneRegex = /(\+\d{1,2}\s)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/;
-            var phoneMatch = containerText.match(phoneRegex);
-            phone = phoneMatch ? phoneMatch[0] : '';
-        }
-
-        // Return the data as an object
-        return {
-            title: titleText,
-            rating: rating,
-            reviewCount: reviewCount,
-            phone: phone,
-            industry: industry,
-            address: address,
-            companyUrl: companyUrl,
-            href: link.href,
-        };
-    });
+    await scrollResultsPane();
+    return results;
 }
 
 // Convert the table to a CSV string
 function tableToCsv(table) {
-    var csv = [];
-    var rows = table.querySelectorAll('tr');
-    
-    for (var i = 0; i < rows.length; i++) {
-        var row = [], cols = rows[i].querySelectorAll('td, th');
-        
-        for (var j = 0; j < cols.length; j++) {
-            row.push('"' + cols[j].innerText + '"');
-        }
-        csv.push(row.join(','));
-    }
+    const csv = [];
+    const rows = table.querySelectorAll('tr');
+
+    rows.forEach(row => {
+        const cols = row.querySelectorAll('td, th');
+        const rowData = Array.from(cols).map(col => `"${col.textContent}"`);
+        csv.push(rowData.join(','));
+    });
+
     return csv.join('\n');
 }
 
 // Download the CSV file
 function downloadCsv(csv, filename) {
-    var csvFile;
-    var downloadLink;
-
-    csvFile = new Blob([csv], {type: 'text/csv'});
-    downloadLink = document.createElement('a');
+    const csvFile = new Blob([csv], { type: 'text/csv' });
+    const downloadLink = document.createElement('a');
     downloadLink.download = filename;
     downloadLink.href = window.URL.createObjectURL(csvFile);
     downloadLink.style.display = 'none';
